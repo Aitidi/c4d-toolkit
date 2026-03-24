@@ -2,6 +2,10 @@ import c4d
 import json
 import os
 import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+import webbrowser
 import zlib
 from c4d import gui, plugins
 
@@ -61,9 +65,140 @@ class OpenFolderCommand(plugins.CommandData):
         return True
 
 
+class OpenUrlCommand(plugins.CommandData):
+    def __init__(self, url: str, label: str):
+        self.url = url
+        self.label = label
+
+    def Execute(self, doc):
+        try:
+            return bool(webbrowser.open(self.url))
+        except Exception:
+            traceback.print_exc()
+            gui.MessageDialog(
+                f"打开链接失败：{self.label}\n\n{self.url}\n\n{traceback.format_exc()}"
+            )
+            return False
+
+
+class UpdateScriptsCommand(plugins.CommandData):
+    def __init__(self, github_config: dict, target_dir: str):
+        self.github_config = dict(github_config)
+        self.target_dir = target_dir
+
+    def _fetch_json(self, url: str) -> dict:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "aitidi-script-menu/1.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _fetch_bytes(self, url: str) -> bytes:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "aitidi-script-menu/1.0"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.read()
+
+    def _iter_remote_scripts(self):
+        owner = self.github_config["owner"]
+        repo = self.github_config["repo"]
+        branch = self.github_config["branch"]
+        scripts_path = self.github_config["scriptsPath"].strip("/")
+
+        tree_url = (
+            f"https://api.github.com/repos/{owner}/{repo}/git/trees/"
+            f"{urllib.parse.quote(branch, safe='')}?recursive=1"
+        )
+        payload = self._fetch_json(tree_url)
+
+        for item in payload.get("tree", []):
+            if item.get("type") != "blob":
+                continue
+
+            remote_path = item.get("path", "")
+            if not remote_path.startswith(scripts_path + "/"):
+                continue
+
+            relative_path = remote_path[len(scripts_path) + 1 :]
+            if not relative_path.lower().endswith(".py"):
+                continue
+            if os.path.basename(relative_path).startswith("__"):
+                continue
+
+            raw_url = (
+                f"https://raw.githubusercontent.com/{owner}/{repo}/"
+                f"{urllib.parse.quote(branch, safe='')}/"
+                f"{urllib.parse.quote(remote_path, safe='/')}"
+            )
+            yield relative_path, raw_url
+
+    def Execute(self, doc):
+        os.makedirs(self.target_dir, exist_ok=True)
+
+        try:
+            remote_scripts = list(self._iter_remote_scripts())
+            if not remote_scripts:
+                gui.MessageDialog("GitHub 上没有找到可更新的脚本。")
+                return False
+
+            new_count = 0
+            updated_count = 0
+            unchanged_count = 0
+
+            for relative_path, raw_url in remote_scripts:
+                local_path = os.path.join(self.target_dir, *relative_path.split("/"))
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+                payload = self._fetch_bytes(raw_url)
+                old_payload = None
+                if os.path.isfile(local_path):
+                    with open(local_path, "rb") as handle:
+                        old_payload = handle.read()
+
+                if old_payload == payload:
+                    unchanged_count += 1
+                    continue
+
+                with open(local_path, "wb") as handle:
+                    handle.write(payload)
+
+                if old_payload is None:
+                    new_count += 1
+                else:
+                    updated_count += 1
+
+            c4d.EventAdd()
+            gui.MessageDialog(
+                "脚本更新完成。\n\n"
+                f"本地目录：\n{self.target_dir}\n\n"
+                f"新增：{new_count}\n"
+                f"更新：{updated_count}\n"
+                f"未变化：{unchanged_count}\n\n"
+                "如果新增了脚本菜单项，重启 Cinema 4D 后会看到最新菜单。"
+            )
+            return True
+        except urllib.error.HTTPError as exc:
+            traceback.print_exc()
+            gui.MessageDialog(
+                "从 GitHub 更新脚本失败。\n\n"
+                f"HTTP {exc.code}: {exc.reason}"
+            )
+            return False
+        except Exception:
+            traceback.print_exc()
+            gui.MessageDialog(
+                f"更新脚本失败。\n\n{traceback.format_exc()}"
+            )
+            return False
+
+
 _REGISTERED = False
-_MENU_TITLE = "Aitidi Scripts"
+_MENU_TITLE = "Aitidi 脚本"
 _MENU_TREE = []
+_UTILITY_COMMANDS = []
 _COMMAND_LABELS = {}
 
 
@@ -75,20 +210,35 @@ def _config_path() -> str:
     return os.path.join(_plugin_dir(), CONFIG_FILENAME)
 
 
+def _replace_plugin_tokens(path: str) -> str:
+    plugin_dir = _plugin_dir()
+    return (
+        path.replace("%PLUGIN_DIR%", plugin_dir)
+        .replace("${PLUGIN_DIR}", plugin_dir)
+        .replace("{PLUGIN_DIR}", plugin_dir)
+    )
+
+
 def _normalize(path: str) -> str:
-    return os.path.normpath(os.path.expandvars(path.strip()))
+    expanded = os.path.expandvars(path.strip())
+    expanded = os.path.expanduser(expanded)
+    expanded = _replace_plugin_tokens(expanded)
+    return os.path.normpath(expanded)
 
 
 def _load_config() -> dict:
-    config_path = _config_path()
     defaults = {
         "menuTitle": "Aitidi 脚本",
-        "sourceDirs": [
-            r"C:\Users\Aitid\Desktop\MyWorkspace\c4d-toolkit\scripts",
-            r"C:\Users\Aitid\AppData\Roaming\Maxon\Maxon Cinema 4D 2026_1ABCDC12\library\scripts",
-        ],
+        "managedScriptsDir": r"%PLUGIN_DIR%\script",
+        "sourceDirs": [r"%PLUGIN_DIR%\script"],
+        "githubRepoUrl": "https://github.com/Aitidi/c4d-toolkit",
+        "githubOwner": "Aitidi",
+        "githubRepo": "c4d-toolkit",
+        "githubBranch": "main",
+        "githubScriptsPath": "scripts",
     }
 
+    config_path = _config_path()
     if not os.path.isfile(config_path):
         return defaults
 
@@ -168,35 +318,104 @@ def _scan_scripts(source_dirs):
     return groups
 
 
-def _register_commands(menu_tree):
+def _normalize_source_dirs(config: dict):
+    managed_dir = _normalize(config.get("managedScriptsDir") or r"%PLUGIN_DIR%\script")
+    source_dirs = [managed_dir]
+
+    for source_dir in config.get("sourceDirs") or []:
+        normalized = _normalize(source_dir)
+        if normalized not in source_dirs:
+            source_dirs.append(normalized)
+
+    return managed_dir, source_dirs
+
+
+def _github_web_folder_url(config: dict) -> str:
+    repo_url = (config.get("githubRepoUrl") or "").rstrip("/")
+    branch = config.get("githubBranch") or "main"
+    scripts_path = (config.get("githubScriptsPath") or "").strip("/")
+
+    if repo_url and scripts_path:
+        return f"{repo_url}/tree/{branch}/{scripts_path}"
+    if repo_url:
+        return repo_url
+    return "https://github.com/Aitidi/c4d-toolkit"
+
+
+def _build_utility_commands(config: dict, managed_dir: str):
+    github_config = {
+        "owner": config.get("githubOwner") or "Aitidi",
+        "repo": config.get("githubRepo") or "c4d-toolkit",
+        "branch": config.get("githubBranch") or "main",
+        "scriptsPath": config.get("githubScriptsPath") or "scripts",
+    }
+
+    github_folder_url = _github_web_folder_url(config)
+
+    return [
+        {
+            "kind": "url",
+            "id": _command_id("utility", "github-folder"),
+            "label": "打开 GitHub 脚本目录",
+            "url": github_folder_url,
+        },
+        {
+            "kind": "update",
+            "id": _command_id("utility", "update-scripts"),
+            "label": "更新脚本",
+            "targetDir": managed_dir,
+            "github": github_config,
+        },
+        {
+            "kind": "folder",
+            "id": _command_id("utility", "open-local-scripts"),
+            "label": "打开脚本文件夹",
+            "path": managed_dir,
+        },
+    ]
+
+
+def _register_command_plugin(command: dict):
+    kind = command["kind"]
+    cmd_id = int(command["id"])
+    if cmd_id in _COMMAND_LABELS:
+        return
+
+    if kind == "folder":
+        dat = OpenFolderCommand(command["path"], command["label"])
+        help_text = f"打开目录：{command['path']}"
+    elif kind == "url":
+        dat = OpenUrlCommand(command["url"], command["label"])
+        help_text = command["url"]
+    elif kind == "update":
+        dat = UpdateScriptsCommand(command["github"], command["targetDir"])
+        help_text = f"从 GitHub 更新脚本到：{command['targetDir']}"
+    else:
+        dat = ScriptCommand(command["path"], command["label"])
+        help_text = command["path"]
+
+    if plugins.RegisterCommandPlugin(
+        id=cmd_id,
+        str=command["label"],
+        info=0,
+        icon=None,
+        help=help_text,
+        dat=dat,
+    ):
+        _COMMAND_LABELS[cmd_id] = command["label"]
+
+
+def _register_commands(menu_tree, utility_commands):
+    for command in utility_commands:
+        _register_command_plugin(command)
+
     for group in menu_tree:
         folder_cmd = group.get("folderCommand")
         if folder_cmd:
-            cmd_id = int(folder_cmd["id"])
-            if cmd_id not in _COMMAND_LABELS:
-                if plugins.RegisterCommandPlugin(
-                    id=cmd_id,
-                    str=folder_cmd["label"],
-                    info=0,
-                    icon=None,
-                    help=f"打开目录：{folder_cmd['path']}",
-                    dat=OpenFolderCommand(folder_cmd["path"], folder_cmd["label"]),
-                ):
-                    _COMMAND_LABELS[cmd_id] = folder_cmd["label"]
+            _register_command_plugin(folder_cmd)
 
         for entry in group["entries"]:
-            cmd_id = int(entry["id"])
-            if cmd_id in _COMMAND_LABELS:
-                continue
-            if plugins.RegisterCommandPlugin(
-                id=cmd_id,
-                str=entry["label"],
-                info=0,
-                icon=None,
-                help=entry["path"],
-                dat=ScriptCommand(entry["path"], entry["label"]),
-            ):
-                _COMMAND_LABELS[cmd_id] = entry["label"]
+            _register_command_plugin(entry)
 
 
 def _build_submenu(group: dict):
@@ -217,7 +436,7 @@ def _build_submenu(group: dict):
 
 
 def EnhanceMainMenu():
-    if not _MENU_TREE:
+    if not _MENU_TREE and not _UTILITY_COMMANDS:
         return
 
     main_menu = gui.GetMenuResource(MENU_INSERT_ANCHOR)
@@ -227,6 +446,12 @@ def EnhanceMainMenu():
 
     menu = c4d.BaseContainer()
     menu.InsData(c4d.MENURESOURCE_SUBTITLE, _MENU_TITLE)
+
+    for command in _UTILITY_COMMANDS:
+        menu.InsData(c4d.MENURESOURCE_COMMAND, f"PLUGIN_CMD_{command['id']}")
+
+    if _UTILITY_COMMANDS and _MENU_TREE:
+        menu.InsData(c4d.MENURESOURCE_SEPERATOR, True)
 
     for group in _MENU_TREE:
         menu.InsData(c4d.MENURESOURCE_SUBMENU, _build_submenu(group))
@@ -244,14 +469,18 @@ def PluginMessage(msg_id, data):
 
 
 def main():
-    global _REGISTERED, _MENU_TITLE, _MENU_TREE
+    global _REGISTERED, _MENU_TITLE, _MENU_TREE, _UTILITY_COMMANDS
     if _REGISTERED:
         return True
 
     config = _load_config()
+    managed_dir, source_dirs = _normalize_source_dirs(config)
+    os.makedirs(managed_dir, exist_ok=True)
+
     _MENU_TITLE = config.get("menuTitle") or "Aitidi 脚本"
-    _MENU_TREE = _scan_scripts(config.get("sourceDirs") or [])
-    _register_commands(_MENU_TREE)
+    _UTILITY_COMMANDS = _build_utility_commands(config, managed_dir)
+    _MENU_TREE = _scan_scripts(source_dirs)
+    _register_commands(_MENU_TREE, _UTILITY_COMMANDS)
     _REGISTERED = True
     return True
 

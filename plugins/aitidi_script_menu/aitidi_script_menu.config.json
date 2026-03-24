@@ -1,7 +1,12 @@
 {
   "menuTitle": "Aitidi 脚本",
+  "managedScriptsDir": "%PLUGIN_DIR%\\script",
   "sourceDirs": [
-    "C:\\Users\\Aitid\\Desktop\\MyWorkspace\\c4d-toolkit\\scripts",
-    "C:\\Users\\Aitid\\AppData\\Roaming\\Maxon\\Maxon Cinema 4D 2026_1ABCDC12\\library\\scripts"
-  ]
+    "%PLUGIN_DIR%\\script"
+  ],
+  "githubRepoUrl": "https://github.com/Aitidi/c4d-toolkit",
+  "githubOwner": "Aitidi",
+  "githubRepo": "c4d-toolkit",
+  "githubBranch": "main",
+  "githubScriptsPath": "scripts"
 }

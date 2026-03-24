@@ -9,6 +9,18 @@ Cinema 4D 2026 Python plugin that adds a top-level menu named **Aitidi 脚本**.
 - Creates one submenu per configured script folder.
 - Lets you run each script directly from the menu.
 - Adds an `打开 <folder>` entry at the top of each submenu.
+- Adds three fixed utility entries at the top of the menu:
+  - `打开 GitHub 脚本目录`
+  - `更新脚本`
+  - `打开脚本文件夹`
+
+## Default script location
+
+This plugin now reads scripts from a **local runtime folder inside the plugin**:
+
+- `%PLUGIN_DIR%\script`
+
+That local folder is the plugin's read/update target. The repository source scripts can still stay in the repo's own `scripts/` directory.
 
 ## Config
 
@@ -17,14 +29,21 @@ Edit `aitidi_script_menu.config.json`:
 ```json
 {
   "menuTitle": "Aitidi 脚本",
+  "managedScriptsDir": "%PLUGIN_DIR%\\script",
   "sourceDirs": [
-    "C:\\Users\\Aitid\\Desktop\\MyWorkspace\\c4d-toolkit\\scripts",
-    "C:\\Users\\Aitid\\AppData\\Roaming\\Maxon\\Maxon Cinema 4D 2026_1ABCDC12\\library\\scripts"
-  ]
+    "%PLUGIN_DIR%\\script"
+  ],
+  "githubRepoUrl": "https://github.com/Aitidi/c4d-toolkit",
+  "githubOwner": "Aitidi",
+  "githubRepo": "c4d-toolkit",
+  "githubBranch": "main",
+  "githubScriptsPath": "scripts"
 }
 ```
 
 ## Notes
 
+- `%PLUGIN_DIR%` will be resolved to the folder where this plugin is installed.
+- `更新脚本` downloads `.py` files from the configured GitHub scripts path into `managedScriptsDir`.
 - Restart Cinema 4D after adding/removing scripts so the menu rebuilds from startup.
 - Script files are executed as normal Python scripts with `c4d`, `doc`, `op`, `tp`, and `flags` injected.
