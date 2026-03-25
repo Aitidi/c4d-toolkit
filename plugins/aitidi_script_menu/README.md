@@ -9,9 +9,10 @@ Cinema 4D 2026 Python plugin that adds a top-level menu named **Aitidi 脚本**.
 - Creates one submenu per configured script folder.
 - Lets you run each script directly from the menu.
 - Adds an `打开 <folder>` entry at the top of each submenu.
-- Adds three fixed utility entries at the top of the menu:
+- Adds four fixed utility entries at the top of the menu:
   - `打开 GitHub 脚本目录`
   - `更新脚本`
+  - `刷新菜单 / 重载脚本`
   - `打开脚本文件夹`
 
 ## Default script location
@@ -44,6 +45,7 @@ Edit `aitidi_script_menu.config.json`:
 ## Notes
 
 - `%PLUGIN_DIR%` will be resolved to the folder where this plugin is installed.
-- `更新脚本` downloads `.py` files from the configured GitHub scripts path into `managedScriptsDir`.
-- Restart Cinema 4D after adding/removing scripts so the menu rebuilds from startup.
+- `更新脚本` downloads `.py` files from the configured GitHub scripts path into `managedScriptsDir` and auto-refreshes the menu.
+- `刷新菜单 / 重载脚本` will rescan the configured script folders and rebuild the menu without restarting Cinema 4D.
+- If a menu item still does not appear after refreshing, restart Cinema 4D once to rule out host-side caching.
 - Script files are executed as normal Python scripts with `c4d`, `doc`, `op`, `tp`, and `flags` injected.

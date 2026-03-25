@@ -170,14 +170,14 @@ class UpdateScriptsCommand(plugins.CommandData):
                 else:
                     updated_count += 1
 
-            c4d.EventAdd()
+            _reload_runtime_state(update_menus=True)
             gui.MessageDialog(
                 "脚本更新完成。\n\n"
                 f"本地目录：\n{self.target_dir}\n\n"
                 f"新增：{new_count}\n"
                 f"更新：{updated_count}\n"
                 f"未变化：{unchanged_count}\n\n"
-                "如果新增了脚本菜单项，重启 Cinema 4D 后会看到最新菜单。"
+                "菜单已自动刷新；如果仍未显示最新项，再重启一次 Cinema 4D。"
             )
             return True
         except urllib.error.HTTPError as exc:
@@ -191,6 +191,25 @@ class UpdateScriptsCommand(plugins.CommandData):
             traceback.print_exc()
             gui.MessageDialog(
                 f"更新脚本失败。\n\n{traceback.format_exc()}"
+            )
+            return False
+
+
+class RefreshMenuCommand(plugins.CommandData):
+    def Execute(self, doc):
+        try:
+            _reload_runtime_state(update_menus=True)
+            script_count = sum(len(group.get("entries", [])) for group in _MENU_TREE)
+            gui.MessageDialog(
+                "菜单已刷新。\n\n"
+                f"脚本目录：{len(_MENU_TREE)}\n"
+                f"脚本数量：{script_count}"
+            )
+            return True
+        except Exception:
+            traceback.print_exc()
+            gui.MessageDialog(
+                f"刷新菜单失败。\n\n{traceback.format_exc()}"
             )
             return False
 
@@ -367,12 +386,36 @@ def _build_utility_commands(config: dict, managed_dir: str):
             "github": github_config,
         },
         {
+            "kind": "refresh",
+            "id": _command_id("utility", "refresh-menu"),
+            "label": "刷新菜单 / 重载脚本",
+        },
+        {
             "kind": "folder",
             "id": _command_id("utility", "open-local-scripts"),
             "label": "打开脚本文件夹",
             "path": managed_dir,
         },
     ]
+
+
+def _reload_runtime_state(config=None, update_menus: bool = False):
+    global _MENU_TITLE, _MENU_TREE, _UTILITY_COMMANDS
+
+    current_config = config or _load_config()
+    managed_dir, source_dirs = _normalize_source_dirs(current_config)
+    os.makedirs(managed_dir, exist_ok=True)
+
+    _MENU_TITLE = current_config.get("menuTitle") or "Aitidi 脚本"
+    _UTILITY_COMMANDS = _build_utility_commands(current_config, managed_dir)
+    _MENU_TREE = _scan_scripts(source_dirs)
+    _register_commands(_MENU_TREE, _UTILITY_COMMANDS)
+
+    if update_menus:
+        c4d.gui.UpdateMenus()
+        c4d.EventAdd()
+
+    return managed_dir, source_dirs
 
 
 def _register_command_plugin(command: dict):
@@ -390,6 +433,9 @@ def _register_command_plugin(command: dict):
     elif kind == "update":
         dat = UpdateScriptsCommand(command["github"], command["targetDir"])
         help_text = f"从 GitHub 更新脚本到：{command['targetDir']}"
+    elif kind == "refresh":
+        dat = RefreshMenuCommand()
+        help_text = "重新扫描脚本目录并刷新菜单"
     else:
         dat = ScriptCommand(command["path"], command["label"])
         help_text = command["path"]
@@ -469,18 +515,11 @@ def PluginMessage(msg_id, data):
 
 
 def main():
-    global _REGISTERED, _MENU_TITLE, _MENU_TREE, _UTILITY_COMMANDS
+    global _REGISTERED
     if _REGISTERED:
         return True
 
-    config = _load_config()
-    managed_dir, source_dirs = _normalize_source_dirs(config)
-    os.makedirs(managed_dir, exist_ok=True)
-
-    _MENU_TITLE = config.get("menuTitle") or "Aitidi 脚本"
-    _UTILITY_COMMANDS = _build_utility_commands(config, managed_dir)
-    _MENU_TREE = _scan_scripts(source_dirs)
-    _register_commands(_MENU_TREE, _UTILITY_COMMANDS)
+    _reload_runtime_state(update_menus=False)
     _REGISTERED = True
     return True
 
