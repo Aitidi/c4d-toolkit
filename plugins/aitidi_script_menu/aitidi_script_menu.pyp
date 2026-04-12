@@ -61,8 +61,19 @@ class OpenFolderCommand(plugins.CommandData):
         if not os.path.isdir(self.folder_path):
             gui.MessageDialog(f"找不到目录：\n{self.folder_path}")
             return False
-        c4d.storage.ShowInFinder(self.folder_path, False)
-        return True
+
+        try:
+            if os.name == "nt":
+                os.startfile(self.folder_path)
+            else:
+                c4d.storage.ShowInFinder(self.folder_path, False)
+            return True
+        except Exception:
+            traceback.print_exc()
+            gui.MessageDialog(
+                f"打开目录失败：{self.label}\n\n{traceback.format_exc()}"
+            )
+            return False
 
 
 class OpenUrlCommand(plugins.CommandData):
@@ -141,7 +152,7 @@ class UpdateScriptsCommand(plugins.CommandData):
         try:
             remote_scripts = list(self._iter_remote_scripts())
             if not remote_scripts:
-                gui.MessageDialog("GitHub 上没有找到可更新的脚本。")
+                gui.MessageDialog("GitHub 上没有找到可同步的脚本。")
                 return False
 
             new_count = 0
@@ -172,7 +183,7 @@ class UpdateScriptsCommand(plugins.CommandData):
 
             _reload_runtime_state(update_menus=True)
             gui.MessageDialog(
-                "脚本更新完成。\n\n"
+                "脚本同步完成。\n\n"
                 f"本地目录：\n{self.target_dir}\n\n"
                 f"新增：{new_count}\n"
                 f"更新：{updated_count}\n"
@@ -183,14 +194,14 @@ class UpdateScriptsCommand(plugins.CommandData):
         except urllib.error.HTTPError as exc:
             traceback.print_exc()
             gui.MessageDialog(
-                "从 GitHub 更新脚本失败。\n\n"
+                "从 GitHub 同步脚本失败。\n\n"
                 f"HTTP {exc.code}: {exc.reason}"
             )
             return False
         except Exception:
             traceback.print_exc()
             gui.MessageDialog(
-                f"更新脚本失败。\n\n{traceback.format_exc()}"
+                f"同步脚本失败。\n\n{traceback.format_exc()}"
             )
             return False
 
@@ -381,7 +392,7 @@ def _build_utility_commands(config: dict, managed_dir: str):
         {
             "kind": "update",
             "id": _command_id("utility", "update-scripts"),
-            "label": "更新脚本",
+            "label": "同步 GitHub 脚本",
             "targetDir": managed_dir,
             "github": github_config,
         },
@@ -393,7 +404,7 @@ def _build_utility_commands(config: dict, managed_dir: str):
         {
             "kind": "folder",
             "id": _command_id("utility", "open-local-scripts"),
-            "label": "打开脚本文件夹",
+            "label": "打开本地脚本目录",
             "path": managed_dir,
         },
     ]
@@ -432,7 +443,7 @@ def _register_command_plugin(command: dict):
         help_text = command["url"]
     elif kind == "update":
         dat = UpdateScriptsCommand(command["github"], command["targetDir"])
-        help_text = f"从 GitHub 更新脚本到：{command['targetDir']}"
+        help_text = f"从 GitHub 同步脚本到：{command['targetDir']}"
     elif kind == "refresh":
         dat = RefreshMenuCommand()
         help_text = "重新扫描脚本目录并刷新菜单"
@@ -464,23 +475,6 @@ def _register_commands(menu_tree, utility_commands):
             _register_command_plugin(entry)
 
 
-def _build_submenu(group: dict):
-    menu = c4d.BaseContainer()
-    menu.InsData(c4d.MENURESOURCE_SUBTITLE, group["title"])
-
-    folder_cmd = group.get("folderCommand")
-    if folder_cmd:
-        menu.InsData(c4d.MENURESOURCE_COMMAND, f"PLUGIN_CMD_{folder_cmd['id']}")
-        menu.InsData(c4d.MENURESOURCE_SEPERATOR, True)
-
-    if not group["entries"]:
-        return menu
-
-    for entry in group["entries"]:
-        menu.InsData(c4d.MENURESOURCE_COMMAND, f"PLUGIN_CMD_{entry['id']}")
-    return menu
-
-
 def EnhanceMainMenu():
     if not _MENU_TREE and not _UTILITY_COMMANDS:
         return
@@ -496,11 +490,13 @@ def EnhanceMainMenu():
     for command in _UTILITY_COMMANDS:
         menu.InsData(c4d.MENURESOURCE_COMMAND, f"PLUGIN_CMD_{command['id']}")
 
-    if _UTILITY_COMMANDS and _MENU_TREE:
-        menu.InsData(c4d.MENURESOURCE_SEPERATOR, True)
+    has_script_entries = any(group.get("entries") for group in _MENU_TREE)
+    if _UTILITY_COMMANDS and has_script_entries:
+        menu.InsData(c4d.MENURESOURCE_SEPARATOR, True)
 
     for group in _MENU_TREE:
-        menu.InsData(c4d.MENURESOURCE_SUBMENU, _build_submenu(group))
+        for entry in group.get("entries", []):
+            menu.InsData(c4d.MENURESOURCE_COMMAND, f"PLUGIN_CMD_{entry['id']}")
 
     if plugins_menu:
         main_menu.InsDataAfter(c4d.MENURESOURCE_STRING, menu, plugins_menu)
