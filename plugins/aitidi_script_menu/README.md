@@ -6,6 +6,7 @@ Cinema 4D 2026 Python plugin that adds a top-level menu named **Aitidi 脚本**.
 
 - Adds a dedicated top-level menu in the main menu bar.
 - Scans configured script folders for `.py` scripts.
+- If a script has a same-name icon file next to it (`.tif`, `.tiff`, `.png`, `.bmp`, `.jpg`, `.jpeg`), the menu item will display that icon.
 - Creates one submenu per configured script folder.
 - Lets you run each script directly from the menu.
 - Adds an `打开 <folder>` entry at the top of each submenu.
@@ -49,3 +50,4 @@ Edit `aitidi_script_menu.config.json`:
 - `刷新菜单 / 重载脚本` will rescan the configured script folders and rebuild the menu without restarting Cinema 4D.
 - If a menu item still does not appear after refreshing, restart Cinema 4D once to rule out host-side caching.
 - Script files are executed as normal Python scripts with `c4d`, `doc`, `op`, `tp`, and `flags` injected.
+- For script icons, place the image next to the script with the same base name, for example `安全框开关.py` + `安全框开关.tif`.
